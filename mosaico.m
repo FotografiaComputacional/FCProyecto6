@@ -23,11 +23,11 @@ for i = 1:length(errores)
     fprintf('Punto %d: %.4f\n', i, errores(i));
 end
 
-fprintf('\nError m�ximo: %.4f\n', max(errores));
+fprintf('\nError m�ximo: %.4f\n', max(errores));
 
 % Apartado 1) Emparejamiento de puntos
 %             Filtrado de parejas usando RANSAC
-%             Estimaci�n de las transformaciones T
+%             Estimaci�n de las transformaciones T
 
 %puntos = S(5).xy;
 %num_puntos = size(puntos, 2);
@@ -38,7 +38,7 @@ fprintf('\nError m�ximo: %.4f\n', max(errores));
 %plot(puntos(1,:), puntos(2,:), 'r.', 'MarkerSize', 10);
 %title(sprintf('Imagen %d con %d puntos distintivos', 5, num_puntos));
 
-fprintf('Emparejamientos con la imagen n� 5:\n');
+fprintf('Emparejamientos con la imagen n� 5:\n');
 for i = 1:length(S)
     if i ~= 5
         [xy1, xy2] = emparejar(S(i), S(5));
@@ -52,7 +52,7 @@ end
 T = zeros(3, 3, 12);
 T(:, :, 5) = eye(3);
 
-fprintf('Emparejamientos con la imagen n� 5:\n');
+fprintf('Emparejamientos con la imagen n� 5:\n');
 for i = 1:length(S)
     if i ~= 5
         [xy1, xy2] = emparejar(S(i), S(5));
@@ -71,20 +71,20 @@ for i = 1:length(S)
     end
 end
 
-fprintf('\nMatriz de transformaci�n para la imagen 1:\n');
+fprintf('\nMatriz de transformaci�n para la imagen 1:\n');
 show_matriz(T(:, :, 1));
 
-fprintf('\nMatriz de transformaci�n para la imagen 12:\n');
+fprintf('\nMatriz de transformaci�n para la imagen 12:\n');
 show_matriz(T(:, :, 12));
 
 % Guardar el array T
 save('T_data.mat', 'T');
-fprintf('\nMatrices de transformaci�n guardadas en T_data.mat\n');
+fprintf('\nMatrices de transformaci�n guardadas en T_data.mat\n');
 
 
 
 % Apartado 2) Montaje del mosaico 
-%             Eliminaci�n de franjas negras
+%             Eliminaci�n de franjas negras
 
 load('T_data.mat');
 
@@ -101,7 +101,7 @@ Vmax = N;
 for k = 1:NF
     fich = sprintf('pano_%02d.jpg', k);
     im = im2double(imread(fich));
-    
+
     [~, RU, RV] = warp_img(im, T(:,:,k));
     
     Umin = min(Umin, RU(1));
@@ -123,12 +123,121 @@ altoMosaico = Vmax + dV;
 fprintf('Dimensiones del mosaico final: %.1f x %.1f\n', anchoMosaico, altoMosaico);
 msaico = zeros(ceil(altoMosaico), ceil(anchoMosaico), 3);
 
+for k = 1:NF
+    fich = sprintf('pano_%02d.jpg', k);
+    im = im2double(imread(fich));
+    
+    [im_warped, RU, RV] = warp_img(im, T(:, :, k));
+    
+    col_ini = ceil(RU(1) + dU);
+    row_ini = ceil(RV(1) + dV);
+    col_fin = col_ini + size(im_warped, 2) - 1;
+    row_fin = row_ini + size(im_warped, 1) - 1;
+
+    [alto_m, ancho_m, ~] = size(msaico);
+
+    % recortamos si se sale porque salia error 
+    if row_fin > alto_m
+        im_warped = im_warped(1:(alto_m - row_ini + 1), :, :);
+        row_fin = alto_m;
+    end
+    if col_fin > ancho_m
+        im_warped = im_warped(:, 1:(ancho_m - col_ini + 1), :);
+        col_fin = ancho_m;
+    end
+
+    Q = msaico(row_ini:row_fin, col_ini:col_fin, :);
+    for c = 1:3
+        canal = im_warped(:, :, c);
+        Qc = Q(:, :, c);
+        Qc(~isnan(canal)) = canal(~isnan(canal));
+        Q(:, :, c) = Qc;
+    end
+    msaico(row_ini:row_fin, col_ini:col_fin, :) = Q;
+end
+
+
+figure; 
+imshow(msaico);
+title('Mosaico apartado 2');
+
 
 % Apartado 3) Ajuste GLOBAL del mosaico
-%             Gr�ficas del error global antes/despues optimizacion
+%             Gr�ficas del error global antes/despues optimizacion
 
+%P = find_solapamientos(S);
+%save('P_data.mat', 'P');
 
+load('P_data.mat');
+N = sum([P.np]);
+fprintf("Número total de puntos emparejados: %d\n", N);
+disp(P(3))
 
+ancla = 5;
+param0 = T2param(T, ancla);
+err = error_global(param0, P, ancla);
+figure;
+plot(err);
+title('Error global antes de la optimización');
+xlabel('Índice');
+ylabel('Error (coordenadas u y v)');
+
+s = std(err);
+fprintf('Desviación estándar del error global (antes de optimización): σ = %.4f\n', s);
+
+f_min=@(param)error_global(param,P,ancla);
+param_def=lsqnonlin(f_min,param0);
+err_opt = error_global(param_def, P, ancla);
+figure;
+plot(err_opt);
+title('Error global después de la optimización');
+xlabel('Índice');
+ylabel('Error (coordenadas u y v)');
+s = std(err_opt);
+fprintf('Desviación estándar del error global (después de optimización): σ = %.4f\n', s);
+
+T_opt = param2T(param_def, ancla);
+fprintf('\nMatriz de transformación optimizada T(:,:,1):\n');
+show_matriz(T_opt(:,:,1));
+
+fprintf('\nMatriz de transformación optimizada T(:,:,12):\n');
+show_matriz(T_opt(:,:,12));
+
+%Cambio de imagen de referencia
+NF = 12;         % Número de imágenes
+ancla = 2   ;       % Imagen de referencia
+
+T_malas = repmat(eye(3), [1, 1, NF]);
+param_malo = T2param(T_malas, ancla);
+err_ini = error_global(param_malo, P, ancla);
+
+fprintf('---- Cambio de imagen de referencia -----:\n');
+
+figure;
+plot(err_ini);
+title('Error global con hipótesis inicial incorrecta');
+xlabel('Índice');
+ylabel('Error');
+fprintf('Desviación estándar del error inicial: σ = %.4f\n', std(err_ini));
+
+f_malo = @(param) error_global(param, P, ancla);
+param_corr = lsqnonlin(f_malo, param_malo);
+err_corr = error_global(param_corr, P, ancla);
+
+figure;
+plot(err_corr);
+title('Error global después de optimización (partiendo de identidad)');
+xlabel('Índice');
+ylabel('Error');
+
+fprintf('Desviación estándar del error después de optimización: σ = %.4f\n', std(err_corr));
+
+T_final = param2T(param_corr, ancla);
+
+fprintf('\nMatriz de transformación T(:,:,1) con ancla en imagen 2:\n');
+show_matriz(T_final(:, :, 1));
+
+% Mosaico con imagen de referencia 2 - Igual que antes pero con T_final
 
 %%%%%%%%  FIN del SCRIPT  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -256,7 +365,7 @@ function [XY1, XY2] = ransac(XY1, XY2)
         end
     end
     
-    % 4) �ndices de los puntos
+    % 4) �ndices de los puntos
     XY1 = XY1(:, ok);
     XY2 = XY2(:, ok);
 end
@@ -266,7 +375,7 @@ end
 
 function [im2, RU, RV] = warp_img(im, T)
  % 1) Convertir la imagen a double (valores entre 0 y 1) y hallar su alto N y ancho M
- im = double(im) / 255;
+ im = im2double(im);
  [N, M, ~] = size(im);
  
  % 2) Construir los vectores RU y RV con el rango de coordenadas de la imagen en el espacio destino
@@ -317,22 +426,90 @@ end
 
 % FUNCIONES de Apartado 3)
 
-function param=T2param(T,ancla)
- 
+function param = T2param(T, ancla)
+    NF = size(T, 3);         % Número de ima
+    param = [];              
+
+    for k = 1:NF
+        if k ~= ancla
+            M = T(:,:,k);
+            p = reshape(M', 1, 9);  %' para ir filaa fila
+            param = [param, p(1:8)];
+        end
+    end
 end
 
-function T=param2T(param,ancla)
+function T = param2T(param, ancla)
+    NF = length(param)/8 + 1;  % el número de im
+    T = zeros(3, 3, NF);       
 
+    idx = 1;
+    for k = 1:NF
+        if k == ancla
+            T(:,:,k) = eye(3); 
+        else
+            p = param(idx:idx+7);
+            M = [p(1) p(2) p(3);
+                 p(4) p(5) p(6);
+                 p(7) p(8) 1];
+            T(:,:,k) = M;
+            idx = idx + 8;
+        end
+    end
 end
 
-function P=find_solapamientos(S)
 
+function P = find_solapamientos(S)
+    NF = length(S);
+    k = 1;                  
+
+    for i = 1:NF
+        for j = i+1:NF
+            [xy1, xy2] = emparejar(S(i), S(j));
+
+            if size(xy1, 2) >= 10
+                % Filtrado con RANSAC
+                [xy1_f, xy2_f] = ransac(xy1, xy2);
+                np = size(xy1_f, 2);
+
+                if np >= 10
+                    P(k) = struct( ...
+                        'i', i, ...
+                        'j', j, ...
+                        'np', np, ...
+                        'xy1', xy1_f, ...
+                        'xy2', xy2_f);
+                    k = k + 1;
+                end
+            end
+        end
+    end
 end
 
-% Errores cometidos en todos los puntos emparejados
-function err=error_global(param,P,ancla)
+function err = error_global(param, P, ancla)
+    T = param2T(param, ancla);
+    N = sum([P.np]);
+    dif = zeros(2, N);
 
+    rg = 0;             
+
+    for k = 1:length(P)
+        np = P(k).np;                    
+        
+        rg = rg(end) + (1:np); 
+
+        i = P(k).i;
+        j = P(k).j;
+
+        uv1 = aplica_T(P(k).xy1, T(:, :, i));
+        uv2 = aplica_T(P(k).xy2, T(:, :, j));
+
+        dif(:, rg) = uv2 - uv1;
+    end
+
+    err = reshape(dif, 1, []); 
 end
+
 
 
 
